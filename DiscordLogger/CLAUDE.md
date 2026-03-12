@@ -62,11 +62,67 @@ Increment the version in the comment trailer (`# CONFIG VERSION V<N+1>, SHIPPED 
 - `Icons.java` holds shared icon URL constants
 - Plugin degrades gracefully (console-only logging) if webhook URL is missing/invalid — no restart needed after fixing config and running `/dlog reload`
 
+## Planned Work
+
+### Config Generator Rewrite (`docs/assets/js/generator.js`)
+
+The current file is a 758-line monolith with 660+ lines of inline CSS. Plan is to split into a modular step-based system.
+
+**New structure:**
+```
+docs/assets/
+  css/generator.css
+  js/generator/
+    main.js               ← entry point, step registry array
+    state.js              ← shared state + localStorage persistence (30-day expiry)
+    router.js             ← step navigation, progress bar, isSkipped() logic
+    loader.js
+    yaml-builder.js       ← token-replaces the version's config.template.yml
+    yaml-importer.js      ← regex-based import of existing config.yml, no new deps
+    discord-preview.js    ← live CSS embed preview
+    datetime-validator.js ← Java DateTimeFormatter validation
+    steps/
+      step-version.js     ← sets active config version for all subsequent steps
+      step-webhook.js
+      step-import.js
+      step-style.js
+      step-events.js      ← data-driven from options.json
+      step-colors.js      ← data-driven from options.json, auto-skipped if plain text
+      step-output.js
+```
+
+**Core step interface** — each step is a plain JS object:
+```js
+{ id, title, render(), onEnter(), onExit(), isSkipped() }
+```
+
+**Version separation (critical):** The generator supports multiple config versions and this must be preserved. Steps are data-driven from the selected version's `options.json` and `config.template.yml` — nothing hardcoded in step files. `step-version.js` sets which version's data loads for all subsequent steps. Adding v10 = new `docs/assets/configs/v10/` folder + entry in `generator.config.js`, no step changes needed.
+
+**New features to add:** drag-and-drop config import, live Discord embed preview, Java DateTimeFormatter live validation, localStorage save/resume, better webhook error messages, clickable progress bar, auto-skip colors step when plain text selected.
+
+**Technical constraints:** native ES modules (no bundler), no new dependencies, no build step, `generator.config.js` stays unchanged as the global config contract.
+
+**Suggested start order:** `state.js` → `router.js` → one sample step to validate architecture → remaining steps.
+
+### Nested Config Sub-Options Pattern
+
+Currently all event toggles are flat booleans (`log.player.teleport: true`). Need a pattern for sub-options — additional settings that only apply when the parent event is enabled (e.g. a coords toggle under teleport).
+
+**Everything that needs to change when adding a sub-option:**
+
+- `config.yml` / `config.template.yml` — add sub-key under parent (e.g. `teleport-coords: true`), add `{{TOKEN}}` placeholder in template
+- `ConfigMigrator` — bump config version, new key migrates with a sensible default (usually `true` so existing installs don't change behaviour)
+- Listener (Java) — read sub-key only after parent toggle guard passes
+- `options.json` — needs schema extension: `suboptions: [{ id, label, configKey, default }]` on parent items that have them
+- Generator UI (`step-events.js`) — sub-options render indented beneath parent, disabled/hidden when parent is off
+
+Sub-options only appear for config versions whose `options.json` includes the `suboptions` field — older versions degrade gracefully.
+
 ## Branch Strategy
 
 - `main` — production, updated via PR from `dev`
 - `dev` — development/staging
-- `feat/*` — feature branches, created from `dev`, PRed back to `dev`
+- `feat/*, ref/*, bug/*` — feature branches, created from `dev`, PRed back to `dev`
 
 ## CI/CD
 
